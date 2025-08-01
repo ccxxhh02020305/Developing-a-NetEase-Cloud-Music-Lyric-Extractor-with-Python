@@ -1,0 +1,285 @@
+import time
+import random
+import requests
+import json
+import execjs
+import keyboard
+
+from urllib.parse import urlparse, parse_qs, urlunparse
+import os
+
+import sys
+from PyQt6.QtWidgets import QApplication, QFileDialog
+
+
+# JavaScript
+def create_js_context():
+    # 模拟QQ音乐前端环境的核心对象
+    js_code = """
+    // 模拟QQ音乐的全局对象
+    const U = {
+        a: {
+            getUin: function() {
+                return this.uin || "0";
+            },
+            setUin: function(uin) {
+                this.uin = uin;
+            }
+        }
+    };
+
+    // 模拟其他必要对象
+    const T = {
+        l: {
+            getParam: function() { return "0"; }
+        },
+        j: function() {
+            return {
+                request: function() { /* 模拟请求方法 */ }
+            }
+        }
+    };
+
+    // 模拟getUin方法
+    function getUin() {
+        return U.a.getUin();
+    }
+    """
+    return execjs.compile(js_code)
+
+
+# 生成guid
+def generate_guid():
+    milliseconds = int(time.time() * 1000) % 1000
+    random_num = round(2147483647 * random.random())
+    return str((random_num * milliseconds) % 10 ** 10)
+
+
+# 获取VKey
+def get_vkey(songmid, uin, code):
+    # 创建JS环境并设置用户ID
+    ctx = create_js_context()
+    ctx.call("U.a.setUin", str(uin))
+
+    # 请求参数
+    guid = generate_guid()
+
+    if code == 1:
+        filename = f"F000{songmid}.flac"  # 无损格式
+        payload = {
+            "req": {
+                "module": "vkey.GetVkeyServer",
+                "method": "CgiGetVkey",
+                "param": {
+                    "guid": guid,
+                    "songmid": [songmid],
+                    "uin": ctx.call("getUin"),  # 使用模拟的getUin
+                    "platform": "20",
+                    "filename": [filename],  
+                    "songtype": [0]  
+                }
+            }
+        }
+
+    if code == 2:
+        payload = {
+            "req": {
+                "module": "vkey.GetVkeyServer",
+                "method": "CgiGetVkey",
+                "param": {
+                    "guid": guid,
+                    "songmid": [songmid],
+                    "uin": ctx.call("getUin"),  # 使用模拟的getUin
+                    "platform": "20"
+                }
+            }
+        }
+
+    # 发送请求
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        "Referer": "https://y.qq.com/",
+        "Origin": "https://y.qq.com"
+    }
+
+    ################################################################################# 需要填上你的Cookie ###########################################################################################
+    cookies = {
+        "uin": f"o{uin}",  
+        "qm_keyst": "  ",               # 这里
+        "psrf_access_token": "  "       # 还有这里
+    }
+
+    #################################################################################################################################################################################################
+
+    response = requests.post(
+        "https://u.y.qq.com/cgi-bin/musicu.fcg",
+        json=payload,
+        headers=headers,
+        cookies=cookies
+    )
+
+
+    return response.json()
+
+# 路径选择
+def dir_file():
+    app = QApplication(sys.argv)
+    dir_path = QFileDialog.getExistingDirectory(None,"选择文件夹","")
+    print(f"选择的文件路径是: {dir_path}")
+    return dir_path
+
+# 歌曲下载
+def download_music(url, song_name, output_dir):
+
+    # 从URL中提取文件扩展名
+    path = urlparse(url).path
+    file_ext = os.path.splitext(path)[1] or '.m4a'  # 默认使用m4a格式
+
+    # 创建输出目录
+    os.makedirs(output_dir, exist_ok=True)
+
+    file_name = f"{song_name}{file_ext}"
+    file_path = os.path.join(output_dir, file_name)
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        "Referer": "https://y.qq.com/",
+        "Origin": "https://y.qq.com"
+    }
+    try:
+        print(f"开始下载: {song_name}...")
+        response = requests.get(url, headers=headers, stream=True)
+        response.raise_for_status()
+
+
+        # 获取文件大小
+        file_size = int(response.headers.get('Content-Length', 0))
+        print(f"文件大小: {file_size / 1024 / 1024:.2f} MB")
+
+        # 下载文件
+        with open(file_path, 'wb') as f:
+            downloaded = 0
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    # 显示下载进度
+                    if file_size > 0:
+                        progress = downloaded / file_size * 100
+                        print(f"下载进度: {progress:.1f}%", end='\r')
+
+        print(f"\n下载完成! 文件已保存至: {file_path}")
+        return True
+
+    except requests.exceptions.RequestException as e:
+        print(f"下载失败: {e}")
+        return False
+
+
+# 主程序
+if __name__ == "__main__":
+    song_name = input("请输入你想查询的歌名：")
+    user_id = input("请输入你的QQ号：")                          # 可以后输，也可以硬编码
+  # user_id = 00000000000
+
+    # 搜索歌曲（简化版）
+    search_url = f"https://c6.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg?key={song_name}"
+    response = requests.get(search_url)
+    data = response.json()
+
+    if data.get("code") == 0 and "data" in data:
+        songs = data["data"]["song"]["itemlist"]
+        if songs:
+            print(f"找到 {len(songs)} 首相关歌曲：")
+            for i, song in enumerate(songs, 1):
+                print(f"{i}. {song['name']} - {song['singer']} (ID: {song['id']})")
+
+            # 选择歌曲
+            choice = int(input("请选择歌曲序号："))
+            if 1 <= choice <= len(songs):
+                song_mid = songs[choice - 1]["mid"]
+                print(f"获取歌曲信息: MID={song_mid}")
+
+                # 获取VKey
+                vkey_data = get_vkey(songmid=song_mid, uin=user_id, code=1)
+              # print(vkey_data)
+
+                # 解析播放URL
+                try:
+                    purl = vkey_data["req"]["data"]["midurlinfo"][0]["purl"]
+                  # vkey = vkey_data["req"]["data"]["midurlinfo"][0]["vkey"]
+                  # play_url = f"https://ws6.stream.qqmusic.qq.com/{purl}?vkey={vkey}&guid={generate_guid()}&uin={user_id}&fromtag=8"
+                    play_url = f"https://ws6.stream.qqmusic.qq.com/{purl}"
+                    print(f"播放地址: {play_url}")
+                    # 下载音乐
+                    download_success = download_music(url=play_url, song_name=song_name, output_dir=dir_file())
+                    if not download_success:
+                        new_vkey_data = get_vkey(songmid=song_mid, uin=user_id, code=2)
+                        new_purl = new_vkey_data["req"]["data"]["midurlinfo"][0]["purl"]
+                        new_play_url = f"https://ws6.stream.qqmusic.qq.com/{new_purl}"
+                        print(f"返回默认播放地址: {new_play_url}")
+                        download_music(url=new_play_url, song_name=song_name, output_dir=dir_file())
+                except KeyError:
+                    print("解析播放地址失败，返回数据:")
+                    print(json.dumps(vkey_data, indent=2))
+            else:
+                print("无效的选择")
+        else:
+            print("未找到相关歌曲")
+    else:
+        print("搜索失败")
+
+
+print("\n"*5)
+print("按Esc退出......")
+
+# 监听 Esc 键按下事件
+keyboard.wait('esc')  # 阻塞程序，直到按下 Esc 键
+keyboard.unhook_all()  # 释放键盘监听资源
+
+
+# vkey
+"""
+ case 3:
+                            return a = (new Date).getUTCMilliseconds(),
+                            a = String(Math.round(2147483647 * Math.random()) * a % 1e10),
+                            o = [],
+                            r = [],
+                            i = [],
+                            l = 0,
+                            t.forEach((function(e) {
+                                var t, a, s = !(null !== (t = e.action) && void 0 !== t && t.play) && e.tryPlay;
+                                if (n || !s) {
+                                    var c, u;
+                                    if (o.push(e.mid),
+                                    r.push((null === e || void 0 === e ? void 0 : e.type) || 0),
+                                    (null === (a = e.action) || void 0 === a || !a.play) && e.tryPlay)
+                                        i.push("RS02".concat((null === (c = e.vs) || void 0 === c ? void 0 : c[0]) || (null === (u = e.file) || void 0 === u ? void 0 : u.media_mid), ".mp3"));
+                                    e.ctx && (l = 1)
+                                }
+                            }
+                            )),
+                            s = U.a.getUin ? U.a.getUin().toString() : "",
+                            c = {
+                                guid: a,
+                                songmid: o,
+                                songtype: r,
+                                uin: s,
+                                loginflag: 1,
+                                platform: "20",
+                                xcdn: 1
+                            },
+                            l && (c.ctx = l),
+                            i.length && (c.filename = i),
+                            ((u = navigator.userAgent).indexOf("MSIE ") > -1 || u.indexOf("Trident/") > -1 || u.indexOf("Edg/") > -1 || "1" === T.l.getParam("isIE")) && (c.qdesc = "lq96kOgg"),
+                            e.abrupt("return", Object(T.j)().request([{
+                                module: "music.vkey.GetEVkey",
+                                method: "GetUrl",
+                                param: c
+                            }]).then((function(e) {
+                                try {
+                                    return 1e3 === e[0].code ? void U.a.openLogin() : e[0]
+                                } catch (t) {}
+                            }
+                            )));
+"""
