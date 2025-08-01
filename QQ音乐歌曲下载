@@ -106,7 +106,7 @@ def get_vkey(songmid, uin, code):
     cookies = {
         "uin": f"o{uin}",  
         "qm_keyst": "  ",               # 这里
-        "psrf_access_token": "  "       # 还有这里
+        "psrf_qqaccess_token": "  "       # 还有这里
     }
 
     #################################################################################################################################################################################################
@@ -233,9 +233,9 @@ if __name__ == "__main__":
 print("\n"*5)
 print("按Esc退出......")
 
-# 监听 Esc 键按下事件
-keyboard.wait('esc')  # 阻塞程序，直到按下 Esc 键
-keyboard.unhook_all()  # 释放键盘监听资源
+
+keyboard.wait('esc')  
+keyboard.unhook_all()  
 
 
 # vkey
